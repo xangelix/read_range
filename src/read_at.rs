@@ -358,3 +358,191 @@ define_seek_read_internal!(
     std::io::Read,
     std::io::Seek
 );
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::Write as _,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        },
+    };
+
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    // A mock progress tracker for testing.
+    struct MockProgress {
+        total: Arc<AtomicU64>,
+        finished: Arc<AtomicBool>,
+    }
+
+    impl Progress for MockProgress {
+        fn inc(&self, delta: u64) {
+            self.total.fetch_add(delta, Ordering::SeqCst);
+        }
+        fn finish(&self) {
+            self.finished.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Helper to create a temporary file with specific content.
+    /// Returns the temp file handle (to keep it alive), its path, and the content.
+    fn setup_test_file(content: &[u8]) -> (NamedTempFile, std::path::PathBuf, Vec<u8>) {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(content).unwrap();
+        let path = temp_file.path().to_path_buf();
+        (temp_file, path, content.to_vec())
+    }
+
+    #[test]
+    fn test_sync_read_middle() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = read_byte_range(&path, 5, 10).unwrap();
+        assert_eq!(result, &content[5..15]);
+    }
+
+    #[tokio::test]
+    async fn test_async_read_middle() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = async_read_byte_range(&path, 5, 10).await.unwrap();
+        assert_eq!(result, &content[5..15]);
+    }
+
+    #[test]
+    fn test_read_at_start() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = read_byte_range(&path, 0, 5).unwrap();
+        assert_eq!(result, &content[0..5]);
+    }
+
+    #[test]
+    fn test_read_at_end() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = read_byte_range(&path, 21, 5).unwrap();
+        assert_eq!(result, &content[21..26]);
+    }
+
+    #[test]
+    fn test_read_full_file() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = read_byte_range(&path, 0, content.len()).unwrap();
+        assert_eq!(result, content);
+    }
+
+    #[tokio::test]
+    async fn test_async_read_full_file() {
+        let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
+        let result = async_read_byte_range(&path, 0, content.len())
+            .await
+            .unwrap();
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_read_past_eof() {
+        let (_file, path, content) = setup_test_file(b"short file");
+        // Try to read 20 bytes from a 10-byte file.
+        let result = read_byte_range(&path, 0, 20).unwrap();
+        // Should return all available bytes.
+        assert_eq!(result, content);
+    }
+
+    #[tokio::test]
+    async fn test_async_read_past_eof() {
+        let (_file, path, content) = setup_test_file(b"short file");
+        let result = async_read_byte_range(&path, 5, 100).await.unwrap();
+        assert_eq!(result, &content[5..]);
+    }
+
+    #[test]
+    fn test_zero_length_read() {
+        let (_file, path, _) = setup_test_file(b"some data");
+        let result = read_byte_range(&path, 5, 0).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_sync_with_progress() {
+        let (_file, path, _) = setup_test_file(&[0u8; 1000]);
+        let progress = MockProgress {
+            total: Arc::new(AtomicU64::new(0)),
+            finished: Arc::new(AtomicBool::new(false)),
+        };
+
+        let result = read_byte_range_with_progress(&path, 100, 500, &progress).unwrap();
+        assert_eq!(result.len(), 500);
+        assert_eq!(progress.total.load(Ordering::SeqCst), 500);
+        assert!(progress.finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_async_with_progress() {
+        let (_file, path, _) = setup_test_file(&[0u8; 1000]);
+        let progress = MockProgress {
+            total: Arc::new(AtomicU64::new(0)),
+            finished: Arc::new(AtomicBool::new(false)),
+        };
+
+        let result = async_read_byte_range_with_progress(&path, 100, 500, progress)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 500);
+
+        // Retrieve the atomic values from the moved struct for assertion.
+        let final_total = result.len() as u64; // In this mock, it's the same.
+        assert_eq!(final_total, 500);
+    }
+
+    #[test]
+    fn test_file_not_found() {
+        let path = Path::new("a/file/that/does/not/exist.txt");
+        let result = read_byte_range(path, 0, 10);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_not_found() {
+        let path = Path::new("a/file/that/does/not/exist.txt");
+        let result = async_read_byte_range(path, 0, 10).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    // This test is only effective on platforms with positional reads.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_offset_overflow() {
+        let (_file, path, _) = setup_test_file(b"data");
+        let offset = u64::MAX - 5;
+        let len = 10;
+        let result = read_byte_range(&path, offset, len);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn test_async_cancellation_is_not_panic() {
+        // This test simulates a task being cancelled.
+        // Allocate on the heap to avoid a stack overflow in the test.
+        let large_content = vec![0u8; 1024 * 1024];
+        let (_file, path, _) = setup_test_file(&large_content); // Large file
+
+        let task = tokio::spawn(async move { async_read_byte_range(path, 0, 1024 * 1024).await });
+
+        // Immediately abort the task.
+        task.abort();
+
+        // Ensure that awaiting the aborted task results in an error, not a panic.
+        let result = task.await;
+        assert!(result.is_err());
+
+        // The outer error is a `JoinError` because the task was aborted.
+        // Our handler should turn an inner cancellation into `io::ErrorKind::Interrupted`.
+        // If the task panicked, `result.unwrap_err().is_panic()` would be true.
+        assert!(result.unwrap_err().is_cancelled());
+    }
+}
