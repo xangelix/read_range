@@ -19,7 +19,11 @@ categories = [
 [dependencies]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { version = "1", features = ["rt"], default-features = false }
+tokio = { version = "1", features = [
+    "rt",
+    "fs",
+    "io-util",
+], default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
