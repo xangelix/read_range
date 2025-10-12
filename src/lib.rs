@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 #[cfg(not(target_family = "wasm"))]
 pub mod read_at;
 
