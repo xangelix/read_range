@@ -6,6 +6,14 @@ authors = ["Cody Wyatt Neiman (xangelix) <neiman@cody.to>"]
 license = "MIT"
 documentation = "https://docs.rs/read_range"
 repository = "https://github.com/xangelix/read_range"
+keywords = ["file", "io", "read", "range", "async"]
+categories = [
+    "filesystem",
+    "asynchronous",
+    "concurrency",
+    "os::unix-apis",
+    "os::windows-apis",
+]
 
 [dependencies]
 
