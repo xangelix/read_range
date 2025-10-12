@@ -2,6 +2,34 @@ use std::{io, path::Path};
 
 use super::Progress;
 
+/// Handles the result of a `spawn_blocking` call that returns an `io::Result`.
+///
+/// This helper correctly propagates panics from the background task, ensuring that
+/// critical failures like out-of-memory are not hidden. It also gracefully handles
+/// task cancellations by converting them into an `io::Error` of kind `Interrupted`,
+/// which is the standard behavior for async operations that are cancelled.
+#[cfg(any(unix, windows))]
+fn handle_blocking_io_task_result<T>(
+    result: Result<io::Result<T>, tokio::task::JoinError>,
+) -> io::Result<T> {
+    match result {
+        Ok(inner_result) => inner_result,
+        Err(e) => {
+            if e.is_panic() {
+                // The blocking task panicked. Propagate the panic to the caller.
+                std::panic::resume_unwind(e.into_panic());
+            } else {
+                // The task was cancelled. This is a normal event in async,
+                // not a bug. We translate it into an error.
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "blocking task was cancelled",
+                ))
+            }
+        }
+    }
+}
+
 /// Reads a specific range of bytes from a file asynchronously.
 ///
 /// This function provides a portable and efficient way to read a segment of a file.
@@ -22,14 +50,18 @@ use super::Progress;
 /// # Returns
 ///
 /// A `Result` containing a `Vec<u8>` with the bytes read. The vector's length
-/// may be less than `len` if the read operation reached the end of the file.
+/// will be equal to `len` unless the read operation reached the end of the file.
 ///
 /// # Errors
 ///
 /// This function will return an `io::Error` if:
-/// - The file cannot be opened.
-/// - The underlying read operation fails.
-/// - A blocking task panics or is cancelled when offloading to a thread pool.
+/// - The file cannot be opened or the underlying read operation fails.
+/// - The blocking I/O task is cancelled.
+///
+/// # Panics
+///
+/// This function will panic if the blocking task responsible for file I/O panics
+/// (e.g., due to an out-of-memory error when allocating the read buffer).
 pub async fn async_read_byte_range(
     path: impl AsRef<Path>,
     offset: u64,
@@ -38,11 +70,11 @@ pub async fn async_read_byte_range(
     #[cfg(any(unix, windows))]
     {
         let path_buf = path.as_ref().to_path_buf();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             read_at_internal(path_buf, offset, len as u64, None::<&dyn Progress>)
         })
-        .await
-        .map_err(io::Error::other)?
+        .await;
+        handle_blocking_io_task_result(result)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -65,20 +97,25 @@ pub async fn async_read_byte_range(
 /// * `path`: The path to the file to read from.
 /// * `offset`: The starting position (in bytes) from the beginning of the file.
 /// * `len`: The total number of bytes to read.
-/// * `ps`: A reference to the progress tracking structure.
+/// * `pb`: A progress tracking structure.
 ///
 /// # Returns
 ///
 /// A `Result` containing a `Vec<u8>` with the bytes read. The vector's length
-/// will be less than `len` if the read operation reached the end of the file.
+/// will be equal to `len` unless the read operation reached the end of the file.
 ///
 /// # Errors
 ///
 /// This function will return an `io::Error` if:
-/// - The file cannot be opened.
-/// - The underlying read operation fails.
+/// - The file cannot be opened or the underlying read operation fails.
 /// - `len` is too large to fit in memory (`> usize::MAX`).
-/// - A blocking task panics or is cancelled.
+/// - The sum of `offset` and `len` overflows a `u64`.
+/// - The blocking I/O task is cancelled.
+///
+/// # Panics
+///
+/// This function will panic if the blocking task responsible for file I/O panics
+/// (e.g., due to an out-of-memory error when allocating the read buffer).
 pub async fn async_read_byte_range_with_progress(
     path: impl AsRef<Path>,
     offset: u64,
@@ -88,9 +125,10 @@ pub async fn async_read_byte_range_with_progress(
     #[cfg(any(unix, windows))]
     {
         let path_buf = path.as_ref().to_path_buf();
-        tokio::task::spawn_blocking(move || read_at_internal(path_buf, offset, len, Some(&pb)))
-            .await
-            .map_err(io::Error::other)?
+        let result =
+            tokio::task::spawn_blocking(move || read_at_internal(path_buf, offset, len, Some(&pb)))
+                .await;
+        handle_blocking_io_task_result(result)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -101,32 +139,11 @@ pub async fn async_read_byte_range_with_progress(
 
 /// Reads a specific range of bytes from a file synchronously.
 ///
-/// This function provides a portable and efficient way to read a segment of a file.
-/// On supported platforms (Unix, Windows), it uses the most efficient underlying
-/// OS syscall (`pread` or `ReadFileScatter`). This avoids mutating the file
-/// handle's cursor, making it safe for concurrent use.
-///
-/// For other platforms, it falls back to standard seek-and-read operations.
-///
-/// **Note:** This is a blocking operation and will block the current thread.
-/// Do not call it from within an asynchronous context without offloading it to a
-/// blocking-aware thread pool (like `tokio::task::spawn_blocking`).
-///
-/// # Parameters
-///
-/// * `path`: The path to the file to read from.
-/// * `offset`: The starting position (in bytes) from the beginning of the file.
-/// * `len`: The number of bytes to read.
-///
-/// # Returns
-///
-/// A `Result` containing a `Vec<u8>` with the bytes read. The vector's length
-/// may be less than `len` if the read operation reached the end of the file.
-///
 /// # Errors
 ///
-/// This function will return an `io::Error` if the file cannot be opened or the
-/// underlying read operation fails.
+/// This function will return an `io::Error` if:
+/// - The file cannot be opened or the underlying read operation fails.
+/// - The sum of `offset` and `len` overflows a `u64`.
 pub fn read_byte_range(path: impl AsRef<Path>, offset: u64, len: usize) -> io::Result<Vec<u8>> {
     #[cfg(any(unix, windows))]
     {
@@ -141,32 +158,12 @@ pub fn read_byte_range(path: impl AsRef<Path>, offset: u64, len: usize) -> io::R
 
 /// Reads a specific range of bytes from a file synchronously with progress reporting.
 ///
-/// This function provides a portable and efficient way to read a segment of a file
-/// while reporting progress. To display progress, the file is read in chunks.
-///
-/// On supported platforms (Unix, Windows), it uses efficient `read_at` syscalls.
-/// For other platforms, it falls back to standard seek-and-read operations.
-///
-/// **Note:** This is a blocking operation and will block the current thread.
-///
-/// # Parameters
-///
-/// * `path`: The path to the file to read from.
-/// * `offset`: The starting position (in bytes) from the beginning of the file.
-/// * `len`: The total number of bytes to read.
-/// * `ps`: A reference to the progress tracking structure.
-///
-/// # Returns
-///
-/// A `Result` containing a `Vec<u8>` with the bytes read. The vector's length
-/// will be less than `len` if the read operation reached the end of the file.
-///
 /// # Errors
 ///
 /// This function will return an `io::Error` if:
-/// - The file cannot be opened.
-/// - The underlying read operation fails.
+/// - The file cannot be opened or the underlying read operation fails.
 /// - `len` is too large to fit in memory (`> usize::MAX`).
+/// - The sum of `offset` and `len` overflows a `u64`.
 pub fn read_byte_range_with_progress(
     path: impl AsRef<Path>,
     offset: u64,
@@ -184,8 +181,22 @@ pub fn read_byte_range_with_progress(
     }
 }
 
-/// Internal implementation using `read_at` for POSIX-compliant systems and Windows.
-/// This is a blocking operation.
+//================================================================================
+// Internal Implementation Details
+//================================================================================
+
+/// Checks if a u64 length can safely be converted to usize for buffer allocation.
+#[inline]
+fn validate_len_for_buffer(len: u64) -> io::Result<usize> {
+    len.try_into().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "length is too large for memory buffer",
+        )
+    })
+}
+
+/// Internal implementation using positional reads for POSIX-compliant systems and Windows.
 #[cfg(any(unix, windows))]
 pub fn read_at_internal(
     path: impl AsRef<Path>,
@@ -193,162 +204,148 @@ pub fn read_at_internal(
     len: u64,
     pb: Option<&(impl Progress + ?Sized)>,
 ) -> io::Result<Vec<u8>> {
-    let file = std::fs::File::open(path.as_ref())?;
-    let capacity: usize = len.try_into().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "length is too large for memory buffer",
-        )
-    })?;
-
-    let mut buffer = vec![0; capacity];
-    if let Some(pb) = pb {
-        let mut total_bytes_read = 0;
-
-        while total_bytes_read < capacity {
-            let current_slice = &mut buffer[total_bytes_read..];
-            let current_offset = offset + total_bytes_read as u64;
-
-            let bytes_read = {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::FileExt as _;
-                    file.read_at(current_slice, current_offset)?
-                }
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::FileExt as _;
-                    file.seek_read(current_slice, current_offset)?
-                }
-            };
-
-            if bytes_read == 0 {
-                // End of file reached.
-                break;
-            }
-            total_bytes_read += bytes_read;
-            pb.inc(bytes_read as u64);
+    /// Compatibility helper for `read_at` on unix and `seek_read` on windows.
+    #[inline]
+    fn read_at_compat(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt as _;
+            file.read_at(buf, offset)
         }
-
-        buffer.truncate(total_bytes_read);
-        pb.finish();
-    } else {
-        // No progress reporting: perform a single, more efficient read.
-        let bytes_read = {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt as _;
-                file.read_at(&mut buffer, offset)?
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::FileExt as _;
-                file.seek_read(&mut buffer, offset)?
-            }
-        };
-        buffer.truncate(bytes_read);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt as _;
+            file.seek_read(buf, offset)
+        }
     }
+
+    let file = std::fs::File::open(path.as_ref())?;
+
+    // Prevent silent data corruption from integer overflow when calculating read offset.
+    if offset.checked_add(len).is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "read range offset + length overflows a u64",
+        ));
+    }
+
+    let capacity = validate_len_for_buffer(len)?;
+    let mut buffer = vec![0; capacity];
+
+    let mut total_bytes_read = 0;
+    let read_result = loop {
+        if total_bytes_read >= capacity {
+            break Ok(());
+        }
+        let current_slice = &mut buffer[total_bytes_read..];
+        let current_offset = offset + total_bytes_read as u64;
+
+        match read_at_compat(&file, current_slice, current_offset) {
+            Ok(0) => break Ok(()), // End of file reached.
+            Ok(bytes_read) => {
+                total_bytes_read += bytes_read;
+                if let Some(pb) = pb {
+                    pb.inc(bytes_read as u64);
+                }
+            }
+            Err(e) => break Err(e),
+        }
+    };
+
+    // Always finish the progress bar, even if an error occurred during read.
+    if let Some(pb) = pb {
+        pb.finish();
+    }
+
+    read_result?;
+
+    buffer.truncate(total_bytes_read);
     Ok(buffer)
 }
 
-/// Internal async implementation using `seek` and `read` for other platforms.
+/// Macro to generate nearly identical sync and async `seek_read` functions.
 #[cfg(not(any(unix, windows)))]
-async fn seek_read_async_internal(
-    path: impl AsRef<Path>,
-    offset: u64,
-    len: u64,
-    pb: Option<&(impl Progress + ?Sized)>,
-) -> io::Result<Vec<u8>> {
-    use tokio::{
-        fs::File,
-        io::{AsyncReadExt, AsyncSeekExt},
+macro_rules! define_seek_read_internal {
+    (
+        $vis:vis,
+        $name:ident,
+        $doc:expr,
+        $($async:ident)?,
+        $($await:tt)?,
+        $file:ty,
+        $read_trait:path,
+        $seek_trait:path
+    ) => {
+        #[doc = $doc]
+        $vis $($async)? fn $name(
+            path: impl AsRef<Path>,
+            offset: u64,
+            len: u64,
+            pb: Option<&(impl Progress + ?Sized)>,
+        ) -> io::Result<Vec<u8>> {
+            use $read_trait;
+            use $seek_trait;
+
+            let capacity = validate_len_for_buffer(len)?;
+
+            let mut file = <$file>::open(path)$(.$await)?;
+
+            // The seek_read fallback does not need an explicit overflow check because
+            // `seek` itself will return an `InvalidInput` error on overflow.
+            file.seek(io::SeekFrom::Start(offset))$(.$await)?;
+
+            if let Some(pb) = pb {
+                // Progress reporting path: read in chunks.
+                let mut reader = file.take(len);
+                let mut buffer = Vec::with_capacity(capacity);
+                // 64 KiB is a common and reasonably performant chunk size for I/O.
+                let mut read_buf = vec![0; 64 * 1024];
+
+                let result = loop {
+                    match reader.read(&mut read_buf)$(.$await) {
+                        Ok(0) => break Ok(buffer), // EOF
+                        Ok(n) => {
+                            buffer.extend_from_slice(&read_buf[..n]);
+                            pb.inc(n as u64);
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) => break Err(e),
+                    }
+                };
+                // Always finish the progress bar, even if an error occurred.
+                pb.finish();
+                result
+            } else {
+                // No progress reporting: read all bytes up to `len`.
+                let mut reader = file.take(len);
+                let mut buffer = Vec::with_capacity(capacity);
+                reader.read_to_end(&mut buffer)$(.$await)?;
+                Ok(buffer)
+            }
+        }
     };
-
-    let capacity: usize = len.try_into().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "length is too large for memory buffer",
-        )
-    })?;
-
-    let mut file = File::open(path).await?;
-    file.seek(io::SeekFrom::Start(offset)).await?;
-
-    if let Some(pb) = pb {
-        // Progress reporting path.
-        let mut reader = file.take(len);
-        let mut buffer = Vec::with_capacity(capacity);
-        let mut read_buf = vec![0; 64 * 1024]; // 64 KiB chunk
-
-        loop {
-            match reader.read(&mut read_buf).await {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    buffer.extend_from_slice(&read_buf[..n]);
-                    pb.inc(n as u64);
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        pb.finish();
-        Ok(buffer)
-    } else {
-        // No progress reporting.
-        let mut buffer = vec![0; capacity];
-        let bytes_read = file.read(&mut buffer).await?;
-        buffer.truncate(bytes_read);
-        Ok(buffer)
-    }
 }
 
-/// Internal blocking implementation using `seek` and `read` for other platforms.
 #[cfg(not(any(unix, windows)))]
-pub fn seek_read_blocking_internal(
-    path: impl AsRef<Path>,
-    offset: u64,
-    len: u64,
-    pb: Option<&(impl Progress + ?Sized)>,
-) -> io::Result<Vec<u8>> {
-    use std::io::{Read, Seek};
+define_seek_read_internal!(
+    , // private visibility
+    seek_read_async_internal,
+    "Internal async implementation using `seek` and `read` for other platforms.",
+    async,
+    await,
+    tokio::fs::File,
+    tokio::io::AsyncReadExt,
+    tokio::io::AsyncSeekExt
+);
 
-    let capacity: usize = len.try_into().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "length is too large for memory buffer",
-        )
-    })?;
-
-    let mut file = std::fs::File::open(path)?;
-    file.seek(io::SeekFrom::Start(offset))?;
-
-    if let Some(pb) = pb {
-        // Progress reporting path.
-        let mut reader = file.take(len);
-        let mut buffer = Vec::with_capacity(capacity);
-        let mut read_buf = vec![0; 64 * 1024]; // 64 KiB chunk
-
-        loop {
-            match reader.read(&mut read_buf) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    buffer.extend_from_slice(&read_buf[..n]);
-                    pb.inc(n as u64);
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        pb.finish();
-        Ok(buffer)
-    } else {
-        // No progress reporting.
-        let mut reader = file.take(len);
-        let mut buffer = vec![0; capacity];
-        // A single read may not fill the buffer, but we preserve the original's
-        // behavior of performing one read attempt.
-        let bytes_read = reader.read(&mut buffer)?;
-        buffer.truncate(bytes_read);
-        Ok(buffer)
-    }
-}
+#[cfg(not(any(unix, windows)))]
+define_seek_read_internal!(
+    pub, // public visibility
+    seek_read_blocking_internal,
+    "Internal blocking implementation using `seek` and `read` for other platforms.",
+    , // no async
+    , // no await
+    std::fs::File,
+    std::io::Read,
+    std::io::Seek
+);
