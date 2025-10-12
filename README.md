@@ -96,10 +96,12 @@ async fn main() -> io::Result<()> {
 For long-running reads, you can track progress by implementing the `Progress` trait.
 
 ```rust
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
     io,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use read_range::{Progress, async_read_byte_range_with_progress};
