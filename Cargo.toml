@@ -1,0 +1,13 @@
+[package]
+name = "read_range"
+version = "0.1.0"
+edition = "2024"
+authors = ["Cody Wyatt Neiman (xangelix) <neiman@cody.to>"]
+license = "MIT"
+documentation = "https://docs.rs/read_range"
+repository = "https://github.com/xangelix/read_range"
+
+[dependencies]
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1", features = ["rt"], default-features = false }
