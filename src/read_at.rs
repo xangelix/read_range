@@ -287,7 +287,7 @@ macro_rules! define_seek_read_internal {
         $name:ident,
         $doc:expr,
         $($async:ident)?,
-        $($await:tt)?,
+        $( @$await:tt )?,
         $file:ty,
         $read_trait:path,
         $seek_trait:path
@@ -325,7 +325,7 @@ macro_rules! define_seek_read_internal {
                 let mut read_buf = vec![0; READ_CHUNK.min(capacity)];
 
                 let result = loop {
-                    match reader.read(&mut read_buf)$(.$await) {
+                    match reader.read(&mut read_buf)$(.$await)? {
                         Ok(0) => break Ok(buffer), // EOF
                         Ok(n) => {
                             buffer.extend_from_slice(&read_buf[..n]);
@@ -358,7 +358,7 @@ define_seek_read_internal!(
     seek_read_async_internal,
     "Internal async implementation using `seek` and `read` for other platforms.",
     async,
-    await,
+    @await,
     tokio::fs::File,
     tokio::io::AsyncReadExt,
     tokio::io::AsyncSeekExt
