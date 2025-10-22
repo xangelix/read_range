@@ -31,9 +31,9 @@ cargo add read_range
 The async API uses `tokio`. Enable with the default `async` feature (on by default):
 
 ```toml
-read_range = { version = "0.1", default-features = true } # async ON
+read_range = { version = "0.2", default-features = true } # async ON
 # or disable:
-# read_range = { version = "0.1", default-features = false } # sync-only
+# read_range = { version = "0.2", default-features = false } # sync-only
 ```
 
 ## Usage
