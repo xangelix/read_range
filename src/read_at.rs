@@ -322,7 +322,7 @@ macro_rules! define_seek_read_internal {
                 let mut reader = file.take(len);
                 let mut buffer = Vec::with_capacity(capacity);
                 // 64 KiB is a common and reasonably performant chunk size for I/O.
-                let mut read_buf = vec![0; 64 * 1024];
+                let mut read_buf = vec![0; READ_CHUNK.min(capacity)];
 
                 let result = loop {
                     match reader.read(&mut read_buf)$(.$await) {
@@ -348,6 +348,9 @@ macro_rules! define_seek_read_internal {
         }
     };
 }
+
+#[cfg(not(any(unix, windows)))]
+const READ_CHUNK: usize = 64 * 1024;
 
 #[cfg(not(any(unix, windows)))]
 define_seek_read_internal!(
