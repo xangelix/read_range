@@ -228,6 +228,13 @@ pub fn read_at_internal(
         }
     }
 
+    if len == 0 {
+        if let Some(pb) = pb {
+            pb.finish();
+        }
+        return Ok(Vec::new());
+    }
+
     let file = std::fs::File::open(path.as_ref())?;
 
     // Prevent silent data corruption from integer overflow when calculating read offset.
@@ -294,6 +301,13 @@ macro_rules! define_seek_read_internal {
         ) -> io::Result<Vec<u8>> {
             use $read_trait;
             use $seek_trait;
+
+            if len == 0 {
+                if let Some(pb) = pb {
+                    pb.finish();
+                }
+                return Ok(Vec::new());
+            }
 
             let capacity = validate_len_for_buffer(len)?;
 
