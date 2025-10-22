@@ -17,7 +17,7 @@ use super::Progress;
 /// critical failures like out-of-memory are not hidden. It also gracefully handles
 /// task cancellations by converting them into an `io::Error` of kind `Interrupted`,
 /// which is the standard behavior for async operations that are cancelled.
-#[cfg(any(unix, windows))]
+#[cfg(all(any(unix, windows), feature = "async"))]
 fn handle_blocking_io_task_result<T>(
     result: Result<io::Result<T>, tokio::task::JoinError>,
 ) -> io::Result<T> {
@@ -71,6 +71,7 @@ fn handle_blocking_io_task_result<T>(
 ///
 /// This function will panic if the blocking task responsible for file I/O panics
 /// (e.g., due to an out-of-memory error when allocating the read buffer).
+#[cfg(feature = "async")]
 pub async fn async_read_byte_range(
     path: impl AsRef<Path>,
     offset: u64,
@@ -125,6 +126,7 @@ pub async fn async_read_byte_range(
 ///
 /// This function will panic if the blocking task responsible for file I/O panics
 /// (e.g., due to an out-of-memory error when allocating the read buffer).
+#[cfg(feature = "async")]
 pub async fn async_read_byte_range_with_progress(
     path: impl AsRef<Path>,
     offset: u64,
@@ -358,7 +360,7 @@ macro_rules! define_seek_read_internal {
 #[cfg(not(any(unix, windows)))]
 const READ_CHUNK: usize = 64 * 1024;
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(all(not(any(unix, windows)), feature = "async"))]
 define_seek_read_internal!(
     , // private visibility
     seek_read_async_internal,
@@ -427,6 +429,7 @@ mod tests {
         assert_eq!(result, &content[5..15]);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_read_middle() {
         let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
@@ -455,6 +458,7 @@ mod tests {
         assert_eq!(result, content);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_read_full_file() {
         let (_file, path, content) = setup_test_file(b"abcdefghijklmnopqrstuvwxyz");
@@ -473,6 +477,7 @@ mod tests {
         assert_eq!(result, content);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_read_past_eof() {
         let (_file, path, content) = setup_test_file(b"short file");
@@ -500,6 +505,7 @@ mod tests {
         assert_eq!(progress.total.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_zero_length_with_progress() {
         let (_file, path, _) = setup_test_file(b"abc");
@@ -527,6 +533,7 @@ mod tests {
         assert!(progress.finished.load(Ordering::SeqCst));
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_with_progress() {
         let (_file, path, _) = setup_test_file(&[0u8; 1000]);
@@ -553,6 +560,7 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_file_not_found() {
         let path = Path::new("a/file/that/does/not/exist.txt");
@@ -573,6 +581,7 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
     }
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_async_cancellation_is_not_panic() {
         // This test simulates a task being cancelled.

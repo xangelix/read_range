@@ -16,6 +16,10 @@ categories = [
     "os::windows-apis",
 ]
 
+[features]
+default = ["async"]
+async = ["tokio"]
+
 [dependencies]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -23,7 +27,7 @@ tokio = { version = "1", features = [
     "rt",
     "fs",
     "io-util",
-], default-features = false }
+], default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
