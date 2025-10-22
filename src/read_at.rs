@@ -311,11 +311,11 @@ macro_rules! define_seek_read_internal {
 
             let capacity = validate_len_for_buffer(len)?;
 
-            let mut file = <$file>::open(path)$(.$await)?;
+            let mut file = <$file>::open(path)$(.$await)? ?;
 
             // The seek_read fallback does not need an explicit overflow check because
             // `seek` itself will return an `InvalidInput` error on overflow.
-            file.seek(io::SeekFrom::Start(offset))$(.$await)?;
+            file.seek(io::SeekFrom::Start(offset))$(.$await)? ?;
 
             if let Some(pb) = pb {
                 // Progress reporting path: read in chunks.
@@ -342,7 +342,7 @@ macro_rules! define_seek_read_internal {
                 // No progress reporting: read all bytes up to `len`.
                 let mut reader = file.take(len);
                 let mut buffer = Vec::with_capacity(capacity);
-                reader.read_to_end(&mut buffer)$(.$await)?;
+                reader.read_to_end(&mut buffer)$(.$await)? ?;
                 Ok(buffer)
             }
         }
