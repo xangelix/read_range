@@ -544,6 +544,9 @@ mod tests {
     #[tokio::test]
     async fn test_async_cancellation_is_not_panic() {
         // This test simulates a task being cancelled.
+        // Note: we abort the *outer* Tokio task, so we only assert JoinError::is_cancelled().
+        // The io::ErrorKind::Interrupted mapping happens inside the aborted task and isn't observable here.
+
         // Allocate on the heap to avoid a stack overflow in the test.
         let large_content = vec![0u8; 1024 * 1024];
         let (_file, path, _) = setup_test_file(&large_content); // Large file
