@@ -9,7 +9,7 @@ A simple, fast, and portable Rust crate for reading a specific range of bytes fr
 
 `read_range` offers a robust and efficient way to read a segment of a file without needing to read the entire file into memory. It's built for performance and safety, especially in concurrent applications.
 
-On Unix and Windows, it uses high-performance, platform-specific syscalls (`pread` / `ReadFileScatter`) that read from a specific offset without mutating the global file cursor. This makes it safe to read from the same file handle across multiple threads simultaneously. For other platforms, it uses a standard `seek` and `read` fallback.
+On Unix and Windows, it uses high-performance, platform-specific calls (`pread` on Unix / `seek_read` on Windows) that read from a specific offset without mutating the global file cursor. This makes it safe to read from the same file handle across multiple threads simultaneously. For other platforms, it uses a standard `seek` and `read` fallback.
 
 ## Key Features
 
