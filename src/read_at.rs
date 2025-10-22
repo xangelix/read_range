@@ -207,7 +207,7 @@ fn validate_len_for_buffer(len: u64) -> io::Result<usize> {
 
 /// Internal implementation using positional reads for POSIX-compliant systems and Windows.
 #[cfg(any(unix, windows))]
-pub fn read_at_internal(
+fn read_at_internal(
     path: impl AsRef<Path>,
     offset: u64,
     len: u64,
