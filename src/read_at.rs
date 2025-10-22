@@ -264,6 +264,7 @@ pub fn read_at_internal(
                     pb.inc(bytes_read as u64);
                 }
             }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => break Err(e),
         }
     };
@@ -331,7 +332,7 @@ macro_rules! define_seek_read_internal {
                             buffer.extend_from_slice(&read_buf[..n]);
                             pb.inc(n as u64);
                         }
-                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {},
                         Err(e) => break Err(e),
                     }
                 };
@@ -339,11 +340,16 @@ macro_rules! define_seek_read_internal {
                 pb.finish();
                 result
             } else {
-                // No progress reporting: read all bytes up to `len`.
+                // No progress reporting: read all bytes up to `len` with EINTR retry.
                 let mut reader = file.take(len);
                 let mut buffer = Vec::with_capacity(capacity);
-                reader.read_to_end(&mut buffer)$(.$await)? ?;
-                Ok(buffer)
+                loop {
+                    match reader.read_to_end(&mut buffer)$(.$await)? {
+                        Ok(_) => break Ok(buffer),
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {},
+                        Err(e) => break Err(e),
+                    }
+                }
             }
         }
     };
