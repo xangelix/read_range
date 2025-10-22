@@ -1,8 +1,8 @@
 //! Provides the core implementation for reading specific byte ranges from files.
 //!
-//! On supported platforms (Unix, Windows), this module leverages efficient and
-//! concurrent-safe positional I/O syscalls. For other targets, it uses a
-//! portable `seek` and `read` fallback.
+//! On supported platforms (Unix-like, Windows), this module leverages efficient,
+//! concurrent-safe positional I/O (Unix: `pread`, Windows: `FileExt::seek_read`).
+//! For other targets, it uses a portable `seek` and `read` fallback.
 //!
 //! The public API includes synchronous and asynchronous functions, each with a
 //! corresponding `_with_progress` variant for monitoring long-running reads.
