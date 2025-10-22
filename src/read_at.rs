@@ -177,16 +177,16 @@ pub fn read_byte_range_with_progress(
     path: impl AsRef<Path>,
     offset: u64,
     len: u64,
-    ps: &impl Progress,
+    pb: &impl Progress,
 ) -> io::Result<Vec<u8>> {
     #[cfg(any(unix, windows))]
     {
-        read_at_internal(path, offset, len, Some(ps))
+        read_at_internal(path, offset, len, Some(pb))
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        seek_read_blocking_internal(path, offset, len, Some(ps))
+        seek_read_blocking_internal(path, offset, len, Some(pb))
     }
 }
 
