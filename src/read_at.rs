@@ -482,6 +482,32 @@ mod tests {
     }
 
     #[test]
+    fn test_zero_length_read_with_progress() {
+        let (_file, path, _) = setup_test_file(b"abc");
+        let progress = MockProgress {
+            total: Arc::new(AtomicU64::new(0)),
+            finished: Arc::new(AtomicBool::new(false)),
+        };
+        let result = read_byte_range_with_progress(&path, 0, 0, &progress).unwrap();
+        assert!(result.is_empty());
+        assert!(progress.finished.load(Ordering::SeqCst));
+        assert_eq!(progress.total.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_async_zero_length_with_progress() {
+        let (_file, path, _) = setup_test_file(b"abc");
+        let progress = MockProgress {
+            total: Arc::new(AtomicU64::new(0)),
+            finished: Arc::new(AtomicBool::new(false)),
+        };
+        let result = async_read_byte_range_with_progress(path, 0, 0, progress)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn test_sync_with_progress() {
         let (_file, path, _) = setup_test_file(&[0u8; 1000]);
         let progress = MockProgress {
