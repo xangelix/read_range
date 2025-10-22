@@ -1,6 +1,6 @@
 [package]
 name = "read_range"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "A portable and efficient crate for reading a specific range of bytes from a file. Provides both sync/async APIs and uses concurrent-safe positional I/O."
 authors = ["Cody Wyatt Neiman (xangelix) <neiman@cody.to>"]
