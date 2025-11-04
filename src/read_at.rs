@@ -77,6 +77,9 @@ pub async fn async_read_byte_range(
     offset: u64,
     len: usize,
 ) -> io::Result<Vec<u8>> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
     #[cfg(any(unix, windows))]
     {
         let path_buf = path.as_ref().to_path_buf();
@@ -133,6 +136,9 @@ pub async fn async_read_byte_range_with_progress(
     len: u64,
     pb: impl Progress + Send + 'static,
 ) -> io::Result<Vec<u8>> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
     #[cfg(any(unix, windows))]
     {
         let path_buf = path.as_ref().to_path_buf();
