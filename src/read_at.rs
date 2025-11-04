@@ -32,7 +32,7 @@ fn handle_blocking_io_task_result<T>(
                 // not a bug. We translate it into an error.
                 Err(io::Error::new(
                     io::ErrorKind::Interrupted,
-                    "blocking task was cancelled",
+                    format!("blocking task was cancelled: {e}"),
                 ))
             }
         }
@@ -202,7 +202,7 @@ fn validate_len_for_buffer(len: u64) -> io::Result<usize> {
     len.try_into().map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "length is too large for memory buffer",
+            "length does not fit in memory buffer (usize)",
         )
     })
 }

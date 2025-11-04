@@ -75,7 +75,7 @@ For non-blocking applications, use the `async` variants within a Tokio runtime.
 ```rust
 use std::io;
 
-use read_range::async_read_byte_range;
+use read_range::async_read_byte_range; // requires `features = ["async"]`
 use tempfile::NamedTempFile;
 use tokio::{fs::File, io::AsyncWriteExt as _};
 
